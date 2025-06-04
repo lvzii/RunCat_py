@@ -9,6 +9,12 @@ import psutil
 import sys
 import time
 
+try:
+    import GPUtil
+    has_gpu = True
+except ImportError:
+    has_gpu = False
+
 import win32con
 import win32gui
 import win32gui_struct
@@ -49,6 +55,7 @@ class CatRun(object):
         self.ico_cycle_idx = 0
         self.hwnd, self.hicons = self.create()
         self.menu_id2action = {}
+        self.mode = "cpu"  # 新增，默认模式为cpu
         self.wrapped_menu_options = self.create_wrapped_menu_requirement()
         self.refresh_interval = 0.2  # 初始刷新间隔
         self.scheduler = BackgroundScheduler()
@@ -63,15 +70,18 @@ class CatRun(object):
         self.scheduler.start()
 
     def update_refresh_interval(self):
-        cpu = psutil.cpu_percent(interval=None)
-        # 设定刷新间隔，CPU高时更快，低时更慢（可根据实际需求调整）
-        # Linear scaling: interval goes from 1.0 at 0% CPU to 0.1 at 100% CPU
-        interval = 1.0 - (cpu * 0.009)  # 0.009 = (1.0 - 0.1) / 100
-        # Ensure interval stays within reasonable bounds
+        if self.mode == "cpu":
+            util = psutil.cpu_percent(interval=None)
+        elif self.mode == "gpu" and has_gpu:
+            gpus = GPUtil.getGPUs()
+            util = max([gpu.load * 100 for gpu in gpus]) if gpus else 0
+        else:
+            util = 0
+        # 设定刷新间隔，利用率高时更快，低时更慢
+        interval = 1.0 - (util * 0.009)
         interval = max(0.1, min(1.0, interval)) / 5
-        print(cpu, interval)
+        print(f"{self.mode.upper()}利用率: {util:.1f}%, interval: {interval:.3f}")
 
-        # 如果间隔有变化，重设任务
         if abs(interval - self.refresh_interval) > 1e-3:
             self.refresh_interval = interval
             self.refresh_icon_job.reschedule(trigger="interval", seconds=self.refresh_interval)
@@ -84,6 +94,12 @@ class CatRun(object):
         menu_action = self.menu_id2action[id]
         if menu_action == "quit":
             win32gui.DestroyWindow(self.hwnd)
+        elif menu_action == "switch_cpu":
+            self.mode = "cpu"
+            print("已切换为CPU模式")
+        elif menu_action == "switch_gpu":
+            self.mode = "gpu"
+            print("已切换为GPU模式")
         else:
             menu_action(self)
 
@@ -97,30 +113,32 @@ class CatRun(object):
         return True
 
     def create_menu(self):
-        pass
+        menu = win32gui.CreatePopupMenu()
+        # Quit
+        item_quit, _ = win32gui_struct.PackMENUITEMINFO(text="Quit", wID=1024)
+        win32gui.InsertMenuItem(menu, 0, 1, item_quit)
+        # 切换CPU
+        item_cpu, _ = win32gui_struct.PackMENUITEMINFO(text="切换为CPU占用", wID=1025)
+        win32gui.InsertMenuItem(menu, 1, 1, item_cpu)
+        # 切换GPU
+        if has_gpu:
+            item_gpu, _ = win32gui_struct.PackMENUITEMINFO(text="切换为GPU占用", wID=1026)
+            win32gui.InsertMenuItem(menu, 2, 1, item_gpu)
+        return menu
 
     def show_menu(self):
-        option_text, option_icon, option_action, option_id = self.wrapped_menu_options[0]
-        # 创建菜单
-        menu = win32gui.CreatePopupMenu()
-        item, extras = win32gui_struct.PackMENUITEMINFO(text=option_text, hbmpItem=option_icon, wID=1024)
-        win32gui.InsertMenuItem(menu, 0, 1, item)
-        # 。。。
+        menu = self.create_menu()
         pos = win32gui.GetCursorPos()
-        # See http://msdn.microsoft.com/library/default.asp?url=/library/en-us/winui/menus_0hdi.asp
         win32gui.SetForegroundWindow(self.hwnd)
         win32gui.TrackPopupMenu(menu, win32con.TPM_LEFTALIGN, pos[0], pos[1], 0, self.hwnd, None)
         win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
 
     def create_wrapped_menu_requirement(self):
-        # 明确有哪些菜单需求
-        quit_option = ("Quit", None, "quit")
-        # 包装成后面用的
         wrapped_menu_options = []
-        option_text, option_icon, option_action = quit_option
-        # 退出这类菜单需要一个进程号
-        self.menu_id2action[1024] = option_action
-        wrapped_menu_options.append([option_text, option_icon, option_action, 1024])
+        self.menu_id2action[1024] = "quit"
+        self.menu_id2action[1025] = "switch_cpu"
+        if has_gpu:
+            self.menu_id2action[1026] = "switch_gpu"
         return wrapped_menu_options
 
     def destroy(self, hwnd, msg, wparam, lparam):
