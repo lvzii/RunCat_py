@@ -11,6 +11,7 @@ import time
 
 try:
     import GPUtil
+
     has_gpu = True
 except ImportError:
     has_gpu = False
@@ -80,7 +81,7 @@ class CatRun(object):
         # 设定刷新间隔，利用率高时更快，低时更慢
         interval = 1.0 - (util * 0.009)
         interval = max(0.1, min(1.0, interval)) / 5
-        print(f"{self.mode.upper()}利用率: {util:.1f}%, interval: {interval:.3f}")
+        # print(f"{self.mode.upper()}利用率: {util:.1f}%, interval: {interval:.3f}")
 
         if abs(interval - self.refresh_interval) > 1e-3:
             self.refresh_interval = interval
@@ -96,10 +97,10 @@ class CatRun(object):
             win32gui.DestroyWindow(self.hwnd)
         elif menu_action == "switch_cpu":
             self.mode = "cpu"
-            print("已切换为CPU模式")
+            # print("已切换为CPU模式")
         elif menu_action == "switch_gpu":
             self.mode = "gpu"
-            print("已切换为GPU模式")
+            # print("已切换为GPU模式")
         else:
             menu_action(self)
 
